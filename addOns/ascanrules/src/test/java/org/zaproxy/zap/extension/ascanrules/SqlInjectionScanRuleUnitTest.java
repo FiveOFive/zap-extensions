@@ -30,10 +30,20 @@ import static org.hamcrest.Matchers.is;
 import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
+import fi.iki.elonen.NanoHTTPD.Response.Status;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import org.apache.commons.collections.MapUtils;
 import org.junit.jupiter.api.Test;
 import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Plugin.AttackStrength;
+import org.parosproxy.paros.network.HttpMalformedHeaderException;
 import org.zaproxy.addon.commonlib.CommonAlertTag;
 import org.zaproxy.zap.model.Tech;
 import org.zaproxy.zap.model.TechSet;
@@ -442,5 +452,51 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         protected String getContent(String value) {
             return "Some Content " + contentAddition;
         }
+    }
+
+    @Test
+    void shouldNotAlertFor429Response() throws Exception {
+        // Given
+        String param = "test";
+        String normalPayload = "foo";
+        String attackPayload = "foo' AND '1'='1' -- ";
+        String verificationPayload = "foo' AND '1'='2' -- ";
+        Map<String, Supplier<Response>> paramValueToResponseMap = new HashMap<>();
+        paramValueToResponseMap.put(normalPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
+        paramValueToResponseMap.put(attackPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
+        paramValueToResponseMap.put(verificationPayload, () -> newFixedLengthResponse(Status.TOO_MANY_REQUESTS, NanoHTTPD.MIME_HTML, "too many requests"));
+        Test429Handler handler = new Test429Handler(param, paramValueToResponseMap);
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalPayload), parent);
+
+        // When
+        rule.scan();
+
+        // Fails here
+        // Failure message - Expected: a collection with size <0> but: collection size was <1>
+        assertThat(alertsRaised, hasSize(0));
+    }
+
+    private static class Test429Handler extends NanoServerHandler {
+        private final String targetParam;
+        private final Map<String, Supplier<Response>> paramValueToResponseMap; // Supplier function because the test may send the same payload multiple times
+        private final Supplier<Response> fallbackResponse = () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "");
+
+        public Test429Handler(String targetParam, Map<String, Supplier<Response>> paramValueToResponseMap) {
+            super("/");
+            this.targetParam = targetParam;
+            this.paramValueToResponseMap = paramValueToResponseMap;
+        }
+
+        @Override
+        protected Response serve(IHTTPSession session) {
+            String actualParamValue = getFirstParamValue(session, targetParam);
+
+            @SuppressWarnings("unchecked")
+            final Supplier<Response> responseFn = (Supplier<Response>) MapUtils.getObject(paramValueToResponseMap, actualParamValue, fallbackResponse);
+            final Response response = responseFn.get();
+            return response;
+        }
+        
     }
 }
