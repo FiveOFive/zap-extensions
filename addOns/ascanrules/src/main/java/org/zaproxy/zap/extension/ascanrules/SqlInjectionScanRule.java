@@ -24,7 +24,6 @@ import difflib.DiffUtils;
 import difflib.Patch;
 import java.io.IOException;
 import java.net.SocketException;
-import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -1942,24 +1941,6 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
     protected String stripOffOriginalAndAttackParam(
             String body, String originalPattern, String attackPattern) {
         String result = this.stripOff(this.stripOff(body, attackPattern), originalPattern);
-        return result;
-    }
-
-    /**
-     * decode method that is aware of %, and will decode it as simply %, if it occurs
-     *
-     * @param msg
-     * @return
-     */
-    public static String getURLDecode(String msg) {
-        String result = "";
-        try {
-            result = URLDecoder.decode(msg, "UTF8");
-
-        } catch (Exception e) {
-            // if it can't decode it, return the original string!
-            return msg;
-        }
         return result;
     }
 
