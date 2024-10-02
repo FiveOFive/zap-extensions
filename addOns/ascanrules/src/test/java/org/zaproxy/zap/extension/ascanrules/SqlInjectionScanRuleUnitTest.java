@@ -32,18 +32,14 @@ import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
 import fi.iki.elonen.NanoHTTPD.Response.Status;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.apache.commons.collections.MapUtils;
 import org.junit.jupiter.api.Test;
 import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Plugin.AttackStrength;
-import org.parosproxy.paros.network.HttpMalformedHeaderException;
 import org.zaproxy.addon.commonlib.CommonAlertTag;
 import org.zaproxy.zap.model.Tech;
 import org.zaproxy.zap.model.TechSet;
@@ -459,12 +455,14 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         // Given
         String param = "test";
         String normalPayload = "foo";
-        String attackPayload = "foo' AND '1'='1' -- ";
-        String verificationPayload = "foo' AND '1'='2' -- ";
+        String ANDTrueAttackPayload = "foo' AND '1'='1' -- ";
+        String ANDFalseAttackPayload = "foo' AND '1'='2' -- ";
+        String ORTrueAttackPayload = "foo' OR '1'='1' -- ";
         Map<String, Supplier<Response>> paramValueToResponseMap = new HashMap<>();
         paramValueToResponseMap.put(normalPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
-        paramValueToResponseMap.put(attackPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
-        paramValueToResponseMap.put(verificationPayload, () -> newFixedLengthResponse(Status.TOO_MANY_REQUESTS, NanoHTTPD.MIME_HTML, "too many requests"));
+        paramValueToResponseMap.put(ANDTrueAttackPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
+        paramValueToResponseMap.put(ANDFalseAttackPayload, () -> newFixedLengthResponse(Status.TOO_MANY_REQUESTS, NanoHTTPD.MIME_HTML, "too many requests"));
+        paramValueToResponseMap.put(ORTrueAttackPayload, () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
         Test429Handler handler = new Test429Handler(param, paramValueToResponseMap);
         nano.addHandler(handler);
         rule.init(getHttpMessage("/?" + param + "=" + normalPayload), parent);
