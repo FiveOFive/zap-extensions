@@ -31,6 +31,7 @@ import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
 import java.util.Map;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Plugin.AttackStrength;
@@ -93,287 +94,307 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
                 is(equalTo(CommonAlertTag.WSTG_V42_INPV_05_SQLI.getValue())));
     }
 
-    @Test
-    void shouldTargetDbTech() {
-        // Given
-        TechSet techSet = techSet(Tech.Db);
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(true)));
+    @Nested
+    class DBTech {
+
+        @Test
+        void shouldTargetDbTech() {
+            // Given
+            TechSet techSet = techSet(Tech.Db);
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(true)));
+        }
+
+        @Test
+        void shouldTargetOracleDbTech() {
+            // Given
+            TechSet techSet = techSet(Tech.Oracle);
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(true)));
+        }
+
+        @Test
+        void shouldNotTargetJustNoSqlDbTech() {
+            // Given
+            TechSet techSet = techSet(Tech.MongoDB, Tech.CouchDB);
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(false)));
+        }
+
+        @Test
+        void shouldTargetNoSqlPlusMsSqlDbTech() {
+            // Given
+            TechSet techSet = techSet(Tech.MongoDB, Tech.MsSQL, Tech.CouchDB);
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(true)));
+        }
+
+        @Test
+        void shouldTargetDbChildTechs() {
+            // Given
+            TechSet techSet = techSet(techsOf(Tech.Db));
+            techSet.exclude(Tech.Db);
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(true)));
+        }
+
+        @Test
+        void shouldTargetDbChildTechsWithNonBuiltInTechInstances() {
+            // Given
+            TechSet techSet = techSet(new Tech(new Tech("Db"), "SomeDb"));
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(true)));
+        }
+
+        @Test
+        void shouldNotTargetNonDbTechs() {
+            // Given
+            TechSet techSet = techSetWithout(techsOf(Tech.Db));
+            // When
+            boolean targets = rule.targets(techSet);
+            // Then
+            assertThat(targets, is(equalTo(false)));
+        }
     }
 
-    @Test
-    void shouldTargetOracleDbTech() {
-        // Given
-        TechSet techSet = techSet(Tech.Oracle);
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(true)));
+    @Nested
+    class ExpressionBasedSqlInjection {
+
+        @Test
+        void shouldAlertIfSumExpressionsAreSuccessful() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(1));
+            assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+            assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+            assertThat(
+                    alertsRaised.get(0).getAttack(),
+                    is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
+            assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+            assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+        }
+
+        @Test
+        void shouldAlertIfSumExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM) {
+
+                        @Override
+                        protected String getContent(String value) {
+                            return super.getContent(value) + ": " + value;
+                        }
+                    });
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(1));
+            assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+            assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+            assertThat(
+                    alertsRaised.get(0).getAttack(),
+                    is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
+            assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+            assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+        }
+
+        @Test
+        void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessful() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler(
+                            "/", param, ExpressionBasedHandler.Expression.SUM, true));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @Test
+        void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessfulAndIsReflectedInResponse()
+                throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler(
+                            "/",
+                            param,
+                            ExpressionBasedHandler.Expression.SUM,
+                            true,
+                            ExpressionBasedHandler.Expression.SUM.confirmationExpression));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @Test
+        void shouldAlertIfMultExpressionsAreSuccessful() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(1));
+            assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+            assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+            assertThat(
+                    alertsRaised.get(0).getAttack(),
+                    is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
+            assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+            assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+        }
+
+        @Test
+        void shouldAlertIfMultExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT) {
+
+                        @Override
+                        protected String getContent(String value) {
+                            return super.getContent(value) + ": " + value;
+                        }
+                    });
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(1));
+            assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+            assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+            assertThat(
+                    alertsRaised.get(0).getAttack(),
+                    is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
+            assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+            assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+        }
+
+        @Test
+        void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessful() throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler(
+                            "/", param, ExpressionBasedHandler.Expression.MULT, true));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @Test
+        void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessfulAndReflectedInResponse()
+                throws Exception {
+            // Given
+            String param = "id";
+            nano.addHandler(
+                    new ExpressionBasedHandler(
+                            "/",
+                            param,
+                            ExpressionBasedHandler.Expression.MULT,
+                            true,
+                            ExpressionBasedHandler.Expression.MULT.confirmationExpression));
+            rule.init(
+                    getHttpMessage(
+                            "/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
+                    parent);
+            // When
+            rule.scan();
+            // Then
+            assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+            assertThat(alertsRaised, hasSize(0));
+        }
     }
 
-    @Test
-    void shouldNotTargetJustNoSqlDbTech() {
-        // Given
-        TechSet techSet = techSet(Tech.MongoDB, Tech.CouchDB);
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(false)));
-    }
+    @Nested
+    class BooleanBasedSqlInjection {
 
-    @Test
-    void shouldTargetNoSqlPlusMsSqlDbTech() {
-        // Given
-        TechSet techSet = techSet(Tech.MongoDB, Tech.MsSQL, Tech.CouchDB);
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(true)));
-    }
+        @Test
+        void shouldAlertByBodyComparisonIgnoringXmlEscapedPayload() throws Exception {
+            // Given
+            String param = "topic";
+            String normalPayload = "cats";
+            String attackPayload = "cats' AND '1'='1' -- ";
+            String verificationPayload = "cats' AND '1'='2' -- ";
+            UrlParamValueHandler handler =
+                    UrlParamValueHandler.builder()
+                            .targetParam(param)
+                            .whenParamValueIs(normalPayload)
+                            .thenReturnHtml(normalPayload + ": A")
+                            .whenParamValueIs(attackPayload)
+                            .thenReturnHtml(escapeXml10(attackPayload + ": A"))
+                            .whenParamValueIs(verificationPayload)
+                            .thenReturnHtml(escapeXml10(verificationPayload + ": "))
+                            .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?topic=" + normalPayload), parent);
 
-    @Test
-    void shouldTargetDbChildTechs() {
-        // Given
-        TechSet techSet = techSet(techsOf(Tech.Db));
-        techSet.exclude(Tech.Db);
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(true)));
-    }
+            // When
+            rule.scan();
 
-    @Test
-    void shouldTargetDbChildTechsWithNonBuiltInTechInstances() {
-        // Given
-        TechSet techSet = techSet(new Tech(new Tech("Db"), "SomeDb"));
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(true)));
-    }
-
-    @Test
-    void shouldNotTargetNonDbTechs() {
-        // Given
-        TechSet techSet = techSetWithout(techsOf(Tech.Db));
-        // When
-        boolean targets = rule.targets(techSet);
-        // Then
-        assertThat(targets, is(equalTo(false)));
-    }
-
-    @Test
-    void shouldAlertIfSumExpressionsAreSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldAlertIfSumExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM) {
-
-                    @Override
-                    protected String getContent(String value) {
-                        return super.getContent(value) + ": " + value;
-                    }
-                });
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/", param, ExpressionBasedHandler.Expression.SUM, true));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessfulAndIsReflectedInResponse()
-            throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/",
-                        param,
-                        ExpressionBasedHandler.Expression.SUM,
-                        true,
-                        ExpressionBasedHandler.Expression.SUM.confirmationExpression));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldAlertIfMultExpressionsAreSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldAlertIfMultExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT) {
-
-                    @Override
-                    protected String getContent(String value) {
-                        return super.getContent(value) + ": " + value;
-                    }
-                });
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/", param, ExpressionBasedHandler.Expression.MULT, true));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessfulAndReflectedInResponse()
-            throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/",
-                        param,
-                        ExpressionBasedHandler.Expression.MULT,
-                        true,
-                        ExpressionBasedHandler.Expression.MULT.confirmationExpression));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldAlertByBodyComparisonIgnoringXmlEscapedPayload() throws Exception {
-        // Given
-        String param = "topic";
-        String normalPayload = "cats";
-        String attackPayload = "cats' AND '1'='1' -- ";
-        String verificationPayload = "cats' AND '1'='2' -- ";
-        UrlParamValueHandler handler =
-                UrlParamValueHandler.builder()
-                        .targetParam(param)
-                        .whenParamValueIs(normalPayload)
-                        .thenReturnHtml(normalPayload + ": A")
-                        .whenParamValueIs(attackPayload)
-                        .thenReturnHtml(escapeXml10(attackPayload + ": A"))
-                        .whenParamValueIs(verificationPayload)
-                        .thenReturnHtml(escapeXml10(verificationPayload + ": "))
-                        .build();
-        nano.addHandler(handler);
-        rule.init(getHttpMessage("/?topic=" + normalPayload), parent);
-
-        // When
-        rule.scan();
-
-        // Then
-        assertThat(alertsRaised, hasSize(1));
-        Alert actual = alertsRaised.get(0);
-        assertThat(actual.getParam(), is(equalTo(param)));
-        assertThat(actual.getAttack(), is(equalTo(attackPayload)));
+            // Then
+            assertThat(alertsRaised, hasSize(1));
+            Alert actual = alertsRaised.get(0);
+            assertThat(actual.getParam(), is(equalTo(param)));
+            assertThat(actual.getAttack(), is(equalTo(attackPayload)));
+        }
     }
 
     private static class ExpressionBasedHandler extends NanoServerHandler {

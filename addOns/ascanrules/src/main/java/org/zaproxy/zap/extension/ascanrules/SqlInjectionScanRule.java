@@ -653,7 +653,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
             countOrderByBasedRequests = 0;
 
             testErrorBasedSqlInjection(param, origParamValue);
-            testArithmeticSqlInjection(param, origParamValue);
+            testExpressionBasedSqlInjection(param, origParamValue);
             testBooleanBasedSqlInjection(param, origParamValue);
             testBooleanBasedNoDataSqlInjection(param, origParamValue);
             testUnionBasedSqlInjection(param, origParamValue);
@@ -810,7 +810,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
     // query was last run (could be hours ago)
     // so to work around this, simply re-run the query again now at this point.
     // Note that we are not counting this request in our max number of requests to be issued
-    private void testArithmeticSqlInjection(String param, String origParamValue)
+    private void testExpressionBasedSqlInjection(String param, String origParamValue)
             throws IOException {
         refreshedmessage = getNewMsg();
         try {
