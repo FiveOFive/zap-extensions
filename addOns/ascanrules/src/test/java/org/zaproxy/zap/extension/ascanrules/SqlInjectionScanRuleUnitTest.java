@@ -26,13 +26,25 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
+
+import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Stream;
+
+import org.apache.commons.text.StringEscapeUtils;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.parosproxy.paros.core.scanner.AbstractPlugin;
 import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Plugin.AttackStrength;
 import org.zaproxy.addon.commonlib.CommonAlertTag;
@@ -363,8 +375,309 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         }
     }
 
+    static Stream<Arguments> booleanBasedAttackPayloads() {
+        return Stream.iterate(0, i -> i + 1)
+            .limit(SqlInjectionScanRule.SQL_LOGIC_AND_TRUE.length)
+            .map(i -> arguments(SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[i], SqlInjectionScanRule.SQL_LOGIC_AND_FALSE[i], SqlInjectionScanRule.SQL_LOGIC_OR_TRUE[i]));
+    }
+
+    static final List<Function<String, String>> ENCODING_FUNCTIONS = List.of(
+        SqlInjectionScanRule::getURLEncode,
+        SqlInjectionScanRule::getHTMLEncode,
+        s -> SqlInjectionScanRule.getHTMLEncode(SqlInjectionScanRule.getURLEncode(s)),
+        StringEscapeUtils::escapeXml10,
+        s -> s // Make sure to test for no encoding as well
+    );
+
+    static Stream<Function<String, String>> reflectionEncodings() {
+        return ENCODING_FUNCTIONS.stream();
+    }
+
     @Nested
     class BooleanBasedSqlInjection {
+
+        /**
+         * This truth table was written to document how the current SqlInjectionScanRule code
+         * behaves. It should not be considered as a complete or correct reference of boolean
+         * based injection test cases.
+         * 
+         * 
+         * |               | ANDTrue | ANDFalse | ORTrue | alert  |
+         * | ------------- | ------- | -------- | ------ | ------ |
+         * | matchesNormal |    Y    |    N     |    -   |   Y    |
+         * |               |    Y    |    Y     |    N   |   Y    |
+         * |               |    Y    |    Y     |    Y   |   N    |
+         * |               |    N    |    N/Y   |   N/Y  |   N    |
+         */
+
+        @ParameterizedTest
+        @MethodSource("org.zaproxy.zap.extension.ascanrules.SqlInjectionScanRuleUnitTest#booleanBasedAttackPayloads")
+        void shouldAlert_ANDTrueMatches_ANDFalseDoesNotMatch(String ANDTrue, String ANDFalse) throws Exception {
+            // Given
+            rule.setAttackStrength(AttackStrength.INSANE); // Cover all of the possible attack payloads
+            final String param = "param";
+            final String normalValue = "payload";
+            final String ANDTrueValue = normalValue + ANDTrue;
+            final String ANDFalseValue = normalValue + ANDFalse;
+
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse("different response"))
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(1));
+            Alert actual = alertsRaised.get(0);
+            assertThat(actual.getParam(), is(equalTo(param)));
+            assertThat(actual.getAttack(), is(equalTo(ANDTrueValue)));
+        }
+
+        @ParameterizedTest
+        @MethodSource("org.zaproxy.zap.extension.ascanrules.SqlInjectionScanRuleUnitTest#booleanBasedAttackPayloads")
+        void shouldAlert_ANDTrueMatches_ANDFalseMatches_ORTrueDoesNotMatch(String ANDTrue, String ANDFalse, String ORTrue) throws Exception {
+            // The attacks for LIKE statements have the same value for ANDTrue and ORTrue and can't alert for this case
+            Assumptions.assumeFalse(ANDTrue.startsWith("%"));
+
+            // Given
+            rule.setAttackStrength(AttackStrength.INSANE); // Cover all of the possible attack payloads
+            final String param = "param";
+            final String normalValue = "payload";
+            final String ANDTrueValue = normalValue + ANDTrue;
+            final String ANDFalseValue = normalValue + ANDFalse;
+            final String ORTrueValue = normalValue + ORTrue;
+
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse("normal response"))
+                    .whenParamValueIs(ORTrueValue)
+                    .thenReturnHtml("different response")
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(1));
+            Alert actual = alertsRaised.get(0);
+            assertThat(actual.getParam(), is(equalTo(param)));
+            assertThat(actual.getAttack(), is(equalTo(ANDTrueValue)));
+        }
+
+        @ParameterizedTest
+        @MethodSource("org.zaproxy.zap.extension.ascanrules.SqlInjectionScanRuleUnitTest#booleanBasedAttackPayloads")
+        void shouldNotAlert_ANDTrueMatches_ANDFalseMatches_ORTrueMatches(String ANDTrue, String ANDFalse, String ORTrue) throws Exception {
+            // Given
+            rule.setAttackStrength(AttackStrength.INSANE); // Cover all of the possible attack payloads
+            final String param = "param";
+            final String normalValue = "payload";
+            final String ANDTrueValue = normalValue + ANDTrue;
+            final String ANDFalseValue = normalValue + ANDFalse;
+            final String ORTrueValue = normalValue + ORTrue;
+
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ORTrueValue)
+                    .thenReturnHtml("normal response")
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @Test
+        void shouldNotAlert_ANDTrueDoesNotMatch() throws Exception {
+            // Given
+            rule.setAttackStrength(AttackStrength.INSANE); // Cover all of the possible attack payloads
+            final String param = "param";
+            final String normalValue = "payload";
+            final String ANDTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[0];
+
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml("normal response")
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml("different response")
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @ParameterizedTest
+        @MethodSource("org.zaproxy.zap.extension.ascanrules.SqlInjectionScanRuleUnitTest#reflectionEncodings")
+        void shouldAlert_encodedPayloadReflected(Function<String, String> encodingFunction) throws Exception {
+            final String param = "param";
+            final String normalValue = "<a>%test"; // Includes characters that will be encoded
+            System.out.println(encodingFunction.apply(normalValue));
+            final String ANDTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[0];
+            final String ANDFalseValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_FALSE[0];
+
+            // Set up the positive case where normal and ANDTrue responses match but ANDFalse is different
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml(constructReflectedResponse(normalValue))
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml(constructReflectedResponse(encodingFunction.apply(normalValue)))
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse(encodingFunction.apply(normalValue)) + "something different")
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(1));
+            Alert actual = alertsRaised.get(0);
+            assertThat(actual.getParam(), is(equalTo(param)));
+            assertThat(actual.getAttack(), is(equalTo(ANDTrueValue)));
+        }
+
+        @Test
+        void shouldAlert_valueReflectedMultipleTimes_andWithDifferentEncodings() throws Exception {
+            // Given
+            final String param = "param";
+            final String normalValue = "<a>%test"; // Includes characters that will be encoded
+            final String ANDTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[0];
+            final String ANDFalseValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_FALSE[0];
+
+            // Set up the positive case where normal and ANDTrue responses match but ANDFalse is different
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml(constructReflectedResponse(normalValue))
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml(constructReflectedResponse(escapeXml10(ANDTrueValue), 4))
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse(AbstractPlugin.getURLEncode(ANDFalseValue), 2) + "something different")
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(1));
+            Alert actual = alertsRaised.get(0);
+            assertThat(actual.getParam(), is(equalTo(param)));
+            assertThat(actual.getAttack(), is(equalTo(ANDTrueValue)));
+        }
+
+        @Test
+        void shouldNotAlert_responseIsSameForAllParameter_originalParameterIsAlwaysInResponse() throws Exception {
+            // Given
+            final String param = "param";
+            final String normalValue = "normal";
+            final String ANDTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[0];
+            final String ANDFalseValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_FALSE[0];
+            final String ORTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_OR_TRUE[0];
+
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(constructReflectedResponse(normalValue) + normalValue)
+                    .thenReturnHtml(normalValue + normalValue)
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml(constructReflectedResponse(ANDTrueValue) + normalValue)
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse(ANDFalseValue) + normalValue)
+                    .whenParamValueIs(ORTrueValue)
+                    .thenReturnHtml(constructReflectedResponse(ORTrueValue) + normalValue)
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        @Test
+        void shouldNotAlert_LIKEAttacks_StrengthBelowHigh() throws Exception {
+            // Given
+            rule.setAttackStrength(AttackStrength.MEDIUM);
+            final String param = "param";
+            final String normalValue = "payload";
+            final String ANDTrueValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_TRUE[6]; // 6 is the current index of the first LIKE payload
+            final String ANDFalseValue = normalValue + SqlInjectionScanRule.SQL_LOGIC_AND_FALSE[6]; // 6 is the current index of the first LIKE payload
+
+            // Set up the positive case where normal and ANDTrue responses match but ANDFalse is different
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder()
+                    .targetParam(param)
+                    .whenParamValueIs(normalValue)
+                    .thenReturnHtml(constructReflectedResponse(normalValue))
+                    .whenParamValueIs(ANDTrueValue)
+                    .thenReturnHtml(constructReflectedResponse(ANDTrueValue))
+                    .whenParamValueIs(ANDFalseValue)
+                    .thenReturnHtml(constructReflectedResponse("different from normal and ANDTrue"))
+                    .build();
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?param=" + normalValue), parent);
+
+            // When
+            rule.scan();
+
+            // Then
+            assertThat(alertsRaised, hasSize(0));
+        }
+
+        /**
+         * Build a short response that contains the payload reflected in some text
+         */
+        private String constructReflectedResponse(String payload) {
+            return constructReflectedResponse(payload, 1);
+        }
+
+        private String constructReflectedResponse(String payload, int reflectionCount) {
+            String response = "foo ";
+            for (int i = 0; i < reflectionCount; i++) {
+                response += payload;
+            }
+            return response + " foo ";
+        }
+
+        @Test
+        void shouldNotAlertCases() {
+
+        }
 
         @Test
         void shouldAlertByBodyComparisonIgnoringXmlEscapedPayload() throws Exception {

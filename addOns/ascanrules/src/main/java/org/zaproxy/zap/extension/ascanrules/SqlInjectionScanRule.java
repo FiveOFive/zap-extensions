@@ -399,7 +399,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
      * *not* in the last where clause in a SQL query so as a result, the rest of the query needs to
      * be closed off with the comment.
      */
-    private static final String[] SQL_LOGIC_AND_TRUE = {
+    public static final String[] SQL_LOGIC_AND_TRUE = {
         " AND 1=1" + SQL_ONE_LINE_COMMENT,
         "' AND '1'='1'" + SQL_ONE_LINE_COMMENT,
         "\" AND \"1\"=\"1\"" + SQL_ONE_LINE_COMMENT,
@@ -412,7 +412,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
     };
 
     /** always false statement for comparison in boolean based SQL injection check */
-    private static final String[] SQL_LOGIC_AND_FALSE = {
+    public static final String[] SQL_LOGIC_AND_FALSE = {
         " AND 1=2" + SQL_ONE_LINE_COMMENT,
         "' AND '1'='2'" + SQL_ONE_LINE_COMMENT,
         "\" AND \"1\"=\"2\"" + SQL_ONE_LINE_COMMENT,
@@ -429,7 +429,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
      * injection check Note that, if necessary, the code also tries a variant with the one-line
      * comment " -- " appended to the end.
      */
-    private static final String[] SQL_LOGIC_OR_TRUE = {
+    public static final String[] SQL_LOGIC_OR_TRUE = {
         " OR 1=1" + SQL_ONE_LINE_COMMENT,
         "' OR '1'='1'" + SQL_ONE_LINE_COMMENT,
         "\" OR \"1\"=\"1\"" + SQL_ONE_LINE_COMMENT,
@@ -1937,7 +1937,18 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
         return result;
     }
 
-    /** Replace body by stripping off pattern strings. */
+    /**
+     * Replace body by stripping off pattern strings.
+     * 
+     * Stripping both the originalPattern and attackPattern prevents false negatives when the originalPattern is always
+     * part of the response.
+     * 
+     * For example: there is a website about cats and the response body always includes "this is a page about cats", 
+     * regardless of what parameter values are sent. If the originalPattern is "cats", the stripped response is
+     * "this is a page about". Then when an attack payload is sent, such as "cats AND 1=1", the response is still
+     * "this is a page about cats". If we only strip the attackPattern, this will looks like a different response, when
+     * it fact it is the same as the response for the originalPattern.
+     */
     protected String stripOffOriginalAndAttackParam(
             String body, String originalPattern, String attackPattern) {
         String result = this.stripOff(this.stripOff(body, attackPattern), originalPattern);
