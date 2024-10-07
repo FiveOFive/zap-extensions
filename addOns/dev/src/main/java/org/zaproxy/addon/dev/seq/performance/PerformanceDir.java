@@ -3,7 +3,7 @@
  *
  * ZAP is an HTTP/HTTPS proxy for assessing web application security.
  *
- * Copyright 2021 The ZAP Development Team
+ * Copyright 2024 The ZAP Development Team
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.zaproxy.addon.automation;
+package org.zaproxy.addon.dev.seq.performance;
 
-import com.fasterxml.jackson.annotation.JsonFilter;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import org.zaproxy.addon.dev.TestAuthDirectory;
+import org.zaproxy.addon.dev.TestProxyServer;
 
-@JsonFilter(DefaultPropertyFilter.FILTER_ID)
-@JsonPropertyOrder({"name", "type"})
-@JsonInclude(JsonInclude.Include.NON_DEFAULT)
-public abstract class AutomationData {
+/** A sequence of forms which must be accessed in order. */
+public class PerformanceDir extends TestAuthDirectory {
 
-    public boolean isDefaultValue(String name) {
-        return false;
+    public PerformanceDir(TestProxyServer server, String name) {
+        super(server, name);
+        this.addPage(new SequencePage(server));
     }
 }

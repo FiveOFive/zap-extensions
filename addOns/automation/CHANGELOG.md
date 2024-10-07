@@ -4,8 +4,17 @@ All notable changes to this add-on will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
+
+
+## [0.43.0] - 2024-10-07
 ### Fixed
 - Handle exceptions while running jobs.
+
+### Changed
+- In saved YAML plans:
+  - Fields with default values are omitted.
+  - The "name" and "type" fields are added before other fields.
+  - Values are not quoted unless required.
 
 ## [0.42.0] - 2024-09-02
 ### Added
@@ -415,6 +424,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - First version.
 
+[0.43.0]: https://github.com/zaproxy/zap-extensions/releases/automation-v0.43.0
 [0.42.0]: https://github.com/zaproxy/zap-extensions/releases/automation-v0.42.0
 [0.41.0]: https://github.com/zaproxy/zap-extensions/releases/automation-v0.41.0
 [0.40.1]: https://github.com/zaproxy/zap-extensions/releases/automation-v0.40.1
