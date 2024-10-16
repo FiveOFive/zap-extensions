@@ -31,6 +31,8 @@ import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
 import java.util.Map;
+
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Plugin.AttackStrength;
@@ -374,6 +376,39 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         Alert actual = alertsRaised.get(0);
         assertThat(actual.getParam(), is(equalTo(param)));
         assertThat(actual.getAttack(), is(equalTo(attackPayload)));
+    }
+
+    @Nested
+    class ErrorBasedSqlInjection {
+        @Test
+        void shouldAlert_emptyPrefix() {
+            // Given
+            final String param = "param";
+            final String normalValue = "test";
+            final String emptyPrefixErrorValue = "" + SqlInjectionScanRule. SQL_CHECK_ERR[0];
+            
+            final UrlParamValueHandler handler = UrlParamValueHandler.builder().targetParam(param).whenParamValueIs(param)
+        }
+
+        @Test
+        void shouldAlert_originalParamPrefix() {
+
+        }
+
+        @Test
+        void shouldNotAlert_nonSqlError() {
+
+        }
+
+        @Test
+        void shouldAlert_genericRDMBSError() {
+
+        }
+
+        @Test
+        void shouldAlert_specificRDBMSError() {
+
+        }
     }
 
     private static class ExpressionBasedHandler extends NanoServerHandler {
