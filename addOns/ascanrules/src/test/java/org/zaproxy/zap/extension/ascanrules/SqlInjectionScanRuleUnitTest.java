@@ -30,10 +30,14 @@ import static org.hamcrest.Matchers.is;
 import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
 import fi.iki.elonen.NanoHTTPD.Response;
+import fi.iki.elonen.NanoHTTPD.Response.Status;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.text.StringEscapeUtils;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -359,6 +363,48 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         rule.scan();
         // Then
         assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+        assertThat(alertsRaised, hasSize(0));
+    }
+
+    // false positive case: https://github.com/zaproxy/zaproxy/issues/8651
+    // TODO - explain more details about this case
+    @Test
+    void shouldTreat301RedirectToDifferentPagesAsDifferentResponses() throws Exception {
+        // Given
+        String param = "test";
+        String normalPayload = "1";
+        String attackPayload = "2/2";
+        String verificationPayload = "4/2";
+        Map<String, Supplier<Response>> paramValueToResponseMap = new HashMap<>();
+        paramValueToResponseMap.put(
+                normalPayload,
+                () -> {
+                    final Response response =
+                            newFixedLengthResponse(Status.REDIRECT, NanoHTTPD.MIME_HTML, "normal");
+                    response.addHeader("Location", "https://test.com/location_one");
+                    return response;
+                });
+        paramValueToResponseMap.put(
+                attackPayload,
+                () -> {
+                    final Response response =
+                            newFixedLengthResponse(Status.REDIRECT, NanoHTTPD.MIME_HTML, "normal");
+                    response.addHeader("Location", "https://test.com/location_two");
+                    return response;
+                });
+        paramValueToResponseMap.put(
+                verificationPayload,
+                () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "text"));
+        ControlledStatusCodeHandler handler =
+                new ControlledStatusCodeHandler(param, paramValueToResponseMap);
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalPayload), parent);
+
+        // When
+        rule.scan();
+
+        // TODO - fails here
+        // Failure message - Expected: a collection with size <0> but: collection size was <1>
         assertThat(alertsRaised, hasSize(0));
     }
 
@@ -727,6 +773,42 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
             assertThat(actual.getParam(), is(equalTo(param)));
             assertThat(actual.getAttack(), is(equalTo(attackPayload)));
         }
+
+        // false positive cases: https://github.com/zaproxy/zaproxy/issues/8652,
+        // https://github.com/zaproxy/zaproxy/issues/8653
+        @Test
+        void shouldNotAlertForChangedStatusCode() throws Exception {
+            // Given
+            String param = "test";
+            String normalPayload = "foo";
+            String attackPayload = "foo' AND '1'='1' -- ";
+            String verificationPayload = "foo' AND '1'='2' -- ";
+            Map<String, Supplier<Response>> paramValueToResponseMap = new HashMap<>();
+            paramValueToResponseMap.put(
+                    normalPayload,
+                    () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
+            paramValueToResponseMap.put(
+                    attackPayload,
+                    () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "normal"));
+            paramValueToResponseMap.put(
+                    verificationPayload,
+                    () ->
+                            newFixedLengthResponse(
+                                    Status.TOO_MANY_REQUESTS,
+                                    NanoHTTPD.MIME_HTML,
+                                    "too many requests"));
+            ControlledStatusCodeHandler handler =
+                    new ControlledStatusCodeHandler(param, paramValueToResponseMap);
+            nano.addHandler(handler);
+            rule.init(getHttpMessage("/?" + param + "=" + normalPayload), parent);
+
+            // When
+            rule.scan();
+
+            // TODO - fails here
+            // Failure message - Expected: a collection with size <0> but: collection size was <1>
+            assertThat(alertsRaised, hasSize(0));
+        }
     }
 
     @Nested
@@ -984,6 +1066,38 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
 
         protected String getContent(String value) {
             return "Some Content " + contentAddition;
+        }
+    }
+
+    /**
+     * A test server that can respond with different status codes depending on the request payload
+     */
+    private static class ControlledStatusCodeHandler extends NanoServerHandler {
+        private final String targetParam;
+        private final Map<String, Supplier<Response>>
+                paramValueToResponseMap; // Supplier function because the test may send the same
+        // payload multiple times
+        private final Supplier<Response> fallbackResponse =
+                () -> newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "");
+
+        public ControlledStatusCodeHandler(
+                String targetParam, Map<String, Supplier<Response>> paramValueToResponseMap) {
+            super("/");
+            this.targetParam = targetParam;
+            this.paramValueToResponseMap = paramValueToResponseMap;
+        }
+
+        @Override
+        protected Response serve(IHTTPSession session) {
+            String actualParamValue = getFirstParamValue(session, targetParam);
+
+            @SuppressWarnings("unchecked")
+            final Supplier<Response> responseFn =
+                    (Supplier<Response>)
+                            MapUtils.getObject(
+                                    paramValueToResponseMap, actualParamValue, fallbackResponse);
+            final Response response = responseFn.get();
+            return response;
         }
     }
 }
