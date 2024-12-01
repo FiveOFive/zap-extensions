@@ -46,6 +46,7 @@ import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Category;
 import org.parosproxy.paros.network.HttpMessage;
 import org.zaproxy.addon.commonlib.CommonAlertTag;
+import org.zaproxy.addon.commonlib.http.ComparableResponse;
 import org.zaproxy.addon.commonlib.PolicyTag;
 import org.zaproxy.zap.extension.authentication.ExtensionAuthentication;
 import org.zaproxy.zap.model.Context;
@@ -96,8 +97,8 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
 
     private String sqlInjectionAttack = null;
     private HttpMessage refreshedmessage = null;
-    private String mResBodyNormalUnstripped = null;
-    private String mResBodyNormalStripped = null;
+    private String mResBodyNormalUnstripped = null; // TODO - delete
+    private String mResBodyNormalStripped = null; // TODO - delete
     // what do we do at each attack strength?
     // (some SQL Injection vulns would be picked up by multiple types of checks, and we skip out
     // after the first alert for a URL)
@@ -910,8 +911,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
             return; // Something went wrong, no point continuing
         }
 
-        mResBodyNormalUnstripped = refreshedmessage.getResponseBody().toString();
-        mResBodyNormalStripped = this.stripOff(mResBodyNormalUnstripped, origParamValue);
+        final ComparableResponse normalResponse = new ComparableResponse(refreshedmessage, origParamValue);
 
         if (!sqlInjectionFoundForUrl
                 && doExpressionBased
@@ -938,6 +938,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
                     String modifiedParamValueConfirmForAdd = String.valueOf(paramPlusThree) + "-2";
                     // Do the attack for ADD variant
                     expressionBasedAttack(
+                            normalResponse,
                             param,
                             origParamValue,
                             modifiedParamValueForAdd,
@@ -963,6 +964,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
                                 String.valueOf(paramMultFour) + "/2";
                         // Do the attack for MULT variant
                         expressionBasedAttack(
+                                normalResponse,
                                 param,
                                 origParamValue,
                                 modifiedParamValueForMult,
@@ -1833,6 +1835,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
     }
 
     private void expressionBasedAttack(
+            ComparableResponse normalResponse,
             String param,
             String originalParam,
             String modifiedParamValue,
@@ -1855,19 +1858,15 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
         }
         countExpressionBasedRequests++;
 
-        String modifiedExpressionOutputUnstripped = msg.getResponseBody().toString();
-        String modifiedExpressionOutputStripped =
-                stripOffOriginalAndAttackParam(
-                        modifiedExpressionOutputUnstripped, originalParam, modifiedParamValue);
-        String normalBodyOutputStripped = stripOff(mResBodyNormalStripped, modifiedParamValue);
+        final ComparableResponse modifiedExpressionResponse = new ComparableResponse(msg, modifiedParamValue);
 
         if (!sqlInjectionFoundForUrl && countExpressionBasedRequests < doExpressionMaxRequests) {
             // if the results of the modified request match the original query, we may be onto
             // something.
 
-            if (modifiedExpressionOutputStripped.compareTo(normalBodyOutputStripped) == 0) {
+            if (modifiedExpressionResponse.compareWith(normalResponse) == 1) { // TODO - if the expression is evaluated, it should be the exact same content-length
                 LOGGER.debug(
-                        "Check 4, STRIPPED html output for modified expression parameter [{}] matched (refreshed) original results for {}",
+                        "Check 4, STRIPPED html output for modified expression parameter [{}] matched (refreshed) original results for {}", // TODO - update message
                         modifiedParamValue,
                         refreshedmessage.getRequestHeader().getURI());
                 // confirm that a different parameter value generates different output, to minimise
@@ -1891,17 +1890,11 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
                 }
                 countExpressionBasedRequests++;
 
-                String confirmExpressionOutputUnstripped = msgConfirm.getResponseBody().toString();
-                String confirmExpressionOutputStripped =
-                        stripOffOriginalAndAttackParam(
-                                confirmExpressionOutputUnstripped,
-                                originalParam,
-                                modifiedParamValueConfirm);
+                final ComparableResponse confirmExpressionResponse = new ComparableResponse(msgConfirm, modifiedParamValueConfirm);
 
-                normalBodyOutputStripped =
-                        stripOff(mResBodyNormalStripped, modifiedParamValueConfirm);
-
-                if (confirmExpressionOutputStripped.compareTo(normalBodyOutputStripped) != 0) {
+                final float confirmComparison = confirmExpressionResponse.compareWith(normalResponse); // TODO - is it right to comapreWith confirm with normal, modified, or both?
+                final float inputReflection = ComparableResponse.inputReflectionHeuristic(confirmExpressionResponse, normalResponse);
+                if (confirmComparison > 0 && confirmComparison < 1 && inputReflection == 1) { // TODO - is this the right check? Zero indicates that status codes were different, 1 indicates that they were exactly the same? Does sql injection need custom logic instead of compareWith()
                     // the confirm query did not return the same results.  This means that arbitrary
                     // queries are not all producing the same page output.
                     // this means the fact we earlier reproduced the original page output with a
