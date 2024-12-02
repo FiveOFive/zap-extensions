@@ -1864,7 +1864,7 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
             // if the results of the modified request match the original query, we may be onto
             // something.
 
-            if (modifiedExpressionResponse.compareWith(normalResponse) == 1) { // TODO - if the expression is evaluated, it should be the exact same content-length
+            if (compareResponsesForSqlInjection(normalResponse, modifiedExpressionResponse) == 1) {
                 LOGGER.debug(
                         "Check 4, STRIPPED html output for modified expression parameter [{}] matched (refreshed) original results for {}", // TODO - update message
                         modifiedParamValue,
@@ -1891,10 +1891,8 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
                 countExpressionBasedRequests++;
 
                 final ComparableResponse confirmExpressionResponse = new ComparableResponse(msgConfirm, modifiedParamValueConfirm);
-
-                final float confirmComparison = confirmExpressionResponse.compareWith(normalResponse); // TODO - is it right to comapreWith confirm with normal, modified, or both?
-                final float inputReflection = ComparableResponse.inputReflectionHeuristic(confirmExpressionResponse, normalResponse);
-                if (confirmComparison > 0 && confirmComparison < 1 && inputReflection == 1) { // TODO - is this the right check? Zero indicates that status codes were different, 1 indicates that they were exactly the same? Does sql injection need custom logic instead of compareWith()
+                final float compareConfirmAndNormal = compareResponsesForSqlInjection(normalResponse, confirmExpressionResponse);
+                if (compareConfirmAndNormal < 1 && compareConfirmAndNormal > 0) {
                     // the confirm query did not return the same results.  This means that arbitrary
                     // queries are not all producing the same page output.
                     // this means the fact we earlier reproduced the original page output with a
@@ -2024,5 +2022,69 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
             return techSet;
         }
         return TechSet.getAllTech();
+    }
+
+    /**
+     * BACKGROUND:
+     * 
+     * One method of sql injection testing is to compare the responses of 3 different values sent for a paratmer:
+     * 1) a normal value
+     * 2) an attack value, which if evaluated by a sql engine will behave the same as the normal value
+     * 3) a confirmation value, which if evaluated by a sql engine will behave differently from the normal value
+     * 
+     * First compare the normal and attack responses. Then if they are the same, compare the norml and confirmation and see if they are different.
+     * 
+     * Determining if the responses are the "same" is not trivial.
+     * - Response bodies may reflect input parameters.
+     * - Response bodies may include dynamic content, such as a visitors counter or a current time display.
+     * - Furthermore, some response headers have more or less weight than others.
+     *      - 3xx redirects to different locations is a strong signal that the responses are significantly different
+     *      - Slightly different content-length values is a weak signal that the responses are significantly different, especially when parameters of different lengths are reflected.
+     * 
+     * BEHAVIOR:
+     * 
+     * - Different status codes: return 0
+     * - 3xx with different location headers: return 0
+     * - Other headers are not considered
+     * - 
+     */
+    private static final float HEURISTIC_WEIGHT = .99f;
+    private float compareResponsesForSqlInjection(ComparableResponse one, ComparableResponse two) {
+        if (ComparableResponse.statusCodeHeuristic(one, two) < 1) {
+            return 0;
+        }
+
+        float total = 1f;
+
+        final int statusCode = one.getStatusCode();
+        if (statusCode >= 300 && statusCode < 400) {
+            total *= locationHeaderHeuristic(one, two) * HEURISTIC_WEIGHT + (1 - HEURISTIC_WEIGHT);
+        }
+
+        // TODO - bodies reflected / unreflected match weight
+
+        return total;
+    }
+
+    private float locationHeaderHeuristic(ComparableResponse one, ComparableResponse two) {
+        final String locationHeaderOne = one.getHeaders().get("location");
+        final String locationHeaderTwo = two.getHeaders().get("location");
+        if (!locationHeaderOne.equals(locationHeaderTwo)) {
+            return 0;
+        }
+        return 1;
+    }
+
+    /**
+     * TODO - keep/delete/change this comment?
+     * 
+     * Compare response bodies using the same logic from before migrating to the ComparableResponse class. The reason
+     * for doing this is that changing the body comparison is complicated and could introduce new false negatives or false positives.
+     * 
+     * Now that it's migrated, ZAP contributers can start experimenting with new heuristics.
+     */
+    private float resposeBodiesHeuristic(ComparableResponse one, ComparableResponse two) {
+        // TODO
+        return 1;
     }
 }

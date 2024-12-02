@@ -185,16 +185,29 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
     }
 
     @Test
-    void shouldAlertIfSumExpressionsAreSuccessful() throws Exception {
+    void shouldAlertIfSumExpressionsAreSuccessful_notReflected() throws Exception {
         // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "3-2";
+        final String confirmValue = "4-2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("Some content")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("This content is different")
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
+
         // When
         rule.scan();
+
         // Then
         assertThat(httpMessagesSent, hasSize(greaterThan(1)));
         assertThat(alertsRaised, hasSize(1));
@@ -202,165 +215,139 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
         assertThat(
                 alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
+                is(equalTo(modifiedValue)));
         assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
         assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
     }
 
     @Test
-    void shouldAlertIfSumExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
+    void shouldAlertIfSumExpressionsAreSuccessful_reflected() throws Exception {
         // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.SUM) {
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "3-2";
+        final String confirmValue = "4-2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content: 1")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("Some content: 3-2")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("This content is different: 4-2")
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
 
-                    @Override
-                    protected String getContent(String value) {
-                        return super.getContent(value) + ": " + value;
-                    }
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+        assertThat(alertsRaised, hasSize(1));
+        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+        assertThat(
+                alertsRaised.get(0).getAttack(),
+                is(equalTo(modifiedValue)));
+        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+    }
+
+    @Test
+    void shouldNotAlertIfModifiedIsDifferentFromNormal() throws Exception {
+        // Given
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "3-2";
+        final String confirmValue = "4-2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content: ")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("This content is different")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("This content is different") // Set up the alert case for the confirm payload, but the rule should never reach this code because the modified value was not evaluated
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
+
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(httpMessagesSent, hasSize(greaterThan(1))); // TODO - set up the test so that there is an intuitve exact count here?
+        assertThat(alertsRaised, hasSize(0));
+    }
+
+    @Test
+    void shouldNotAlertIfConfirmationExpressionReturnsNormalResponse() throws Exception {
+        // Given
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "3-2";
+        final String confirmValue = "4-2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content: ")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("Some content: ")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("Some content: ")
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
+
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+        assertThat(alertsRaised, hasSize(0));
+    }
+
+    @Test
+    void shouldNotAlertIfConfirmationIsDifferentStatusCode() throws Exception {
+        // Given
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "3-2";
+        final String confirmValue = "4-2";
+        
+        Map<String, Supplier<Response>> paramValueToResponseMap = new HashMap<>();
+        paramValueToResponseMap.put(
+                normalValue,
+                () -> {
+                    final Response response =
+                            newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "Some content: ");
+                    return response;
                 });
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.SUM.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/", param, ExpressionBasedHandler.Expression.SUM, true));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldNotAlertIfSumConfirmationExpressionIsNotSuccessfulAndIsReflectedInResponse()
-            throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/",
-                        param,
-                        ExpressionBasedHandler.Expression.SUM,
-                        true,
-                        ExpressionBasedHandler.Expression.SUM.confirmationExpression));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.SUM.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
-
-    @Test
-    void shouldAlertIfMultExpressionsAreSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
-
-    @Test
-    void shouldAlertIfMultExpressionsAreSuccessfulAndReflectedInResponse() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler("/", param, ExpressionBasedHandler.Expression.MULT) {
-
-                    @Override
-                    protected String getContent(String value) {
-                        return super.getContent(value) + ": " + value;
-                    }
+        paramValueToResponseMap.put(
+                modifiedValue,
+                () -> {
+                    final Response response =
+                            newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, "Some content: ");
+                    return response;
                 });
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(1));
-        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
-        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                is(equalTo(ExpressionBasedHandler.Expression.MULT.baseExpression)));
-        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
-        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
-    }
+        paramValueToResponseMap.put(
+                confirmValue,
+                () -> newFixedLengthResponse(Status.NOT_FOUND, NanoHTTPD.MIME_HTML, "404 Not Found"));
+        ControlledStatusCodeHandler handler =
+                new ControlledStatusCodeHandler(param, paramValueToResponseMap);
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
 
-    @Test
-    void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessful() throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/", param, ExpressionBasedHandler.Expression.MULT, true));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
         // When
         rule.scan();
-        // Then
-        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
-        assertThat(alertsRaised, hasSize(0));
-    }
 
-    @Test
-    void shouldNotAlertIfMultConfirmationExpressionIsNotSuccessfulAndReflectedInResponse()
-            throws Exception {
-        // Given
-        String param = "id";
-        nano.addHandler(
-                new ExpressionBasedHandler(
-                        "/",
-                        param,
-                        ExpressionBasedHandler.Expression.MULT,
-                        true,
-                        ExpressionBasedHandler.Expression.MULT.confirmationExpression));
-        rule.init(
-                getHttpMessage("/?" + param + "=" + ExpressionBasedHandler.Expression.MULT.value),
-                parent);
-        // When
-        rule.scan();
         // Then
         assertThat(httpMessagesSent, hasSize(greaterThan(1)));
         assertThat(alertsRaised, hasSize(0));
@@ -369,7 +356,7 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
     // false positive case: https://github.com/zaproxy/zaproxy/issues/8651
     // TODO - explain more details about this case
     @Test
-    void shouldTreat301RedirectToDifferentPagesAsDifferentResponses() throws Exception {
+    void shouldNotAlertIfNormalAndModified301RedirectToDifferentLocations() throws Exception {
         // Given
         String param = "test";
         String normalPayload = "1";
@@ -406,6 +393,78 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
         // TODO - fails here
         // Failure message - Expected: a collection with size <0> but: collection size was <1>
         assertThat(alertsRaised, hasSize(0));
+    }
+
+    @Test
+    void shouldAlertIfMultExpressionsAreSuccessful_notReflected() throws Exception {
+        // Given
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "2/2";
+        final String confirmValue = "4/2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("Some content")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("This content is different")
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
+
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+        assertThat(alertsRaised, hasSize(1));
+        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+        assertThat(
+                alertsRaised.get(0).getAttack(),
+                is(equalTo(modifiedValue)));
+        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
+    }
+
+    @Test
+    void shouldAlertIfMultExpressionsAreSuccessful_reflected() throws Exception {
+        // Given
+        final String param = "id";
+        final String normalValue = "1";
+        final String modifiedValue = "2/2";
+        final String confirmValue = "4/2";
+        
+        final UrlParamValueHandler handler =
+                UrlParamValueHandler.builder()
+                        .targetParam(param)
+                        .whenParamValueIs(normalValue)
+                        .thenReturnHtml("Some content: 1")
+                        .whenParamValueIs(modifiedValue)
+                        .thenReturnHtml("Some content: 2/2")
+                        .whenParamValueIs(confirmValue)
+                        .thenReturnHtml("This content is different: 4/2")
+                        .build();
+        nano.addHandler(handler);
+        rule.init(getHttpMessage("/?" + param + "=" + normalValue), parent);
+
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(httpMessagesSent, hasSize(greaterThan(1)));
+        assertThat(alertsRaised, hasSize(1));
+        assertThat(alertsRaised.get(0).getEvidence(), is(equalTo("")));
+        assertThat(alertsRaised.get(0).getParam(), is(equalTo(param)));
+        assertThat(
+                alertsRaised.get(0).getAttack(),
+                is(equalTo(modifiedValue)));
+        assertThat(alertsRaised.get(0).getRisk(), is(equalTo(Alert.RISK_HIGH)));
+        assertThat(alertsRaised.get(0).getConfidence(), is(equalTo(Alert.CONFIDENCE_MEDIUM)));
     }
 
     static final List<Function<String, String>> ENCODING_FUNCTIONS =
@@ -998,74 +1057,6 @@ class SqlInjectionScanRuleUnitTest extends ActiveScannerTest<SqlInjectionScanRul
 
             // Then
             assertThat(alertsRaised, hasSize(0));
-        }
-    }
-
-    private static class ExpressionBasedHandler extends NanoServerHandler {
-
-        public enum Expression {
-            SUM("1", "3-2", "4-2"),
-            MULT("1", "2/2", "4/2");
-
-            private final String value;
-            private final String baseExpression;
-            private final String confirmationExpression;
-
-            Expression(String value, String expression, String confirmationExpression) {
-                this.value = value;
-                this.baseExpression = expression;
-                this.confirmationExpression = confirmationExpression;
-            }
-        }
-
-        private final String param;
-        private final Expression expression;
-        private final boolean confirmationFails;
-        private String contentAddition = "";
-
-        public ExpressionBasedHandler(String path, String param, Expression expression) {
-            this(path, param, expression, false);
-        }
-
-        public ExpressionBasedHandler(
-                String path, String param, Expression expression, boolean confirmationFails) {
-            super(path);
-
-            this.param = param;
-            this.expression = expression;
-            this.confirmationFails = confirmationFails;
-        }
-
-        public ExpressionBasedHandler(
-                String parth,
-                String param,
-                Expression expression,
-                boolean confirmationFails,
-                String contentAddition) {
-            this(parth, param, expression, confirmationFails);
-            this.contentAddition = contentAddition;
-        }
-
-        @Override
-        protected Response serve(IHTTPSession session) {
-            String value = getFirstParamValue(session, param);
-            if (isValidValue(value)) {
-                return newFixedLengthResponse(
-                        Response.Status.OK, NanoHTTPD.MIME_HTML, getContent(value));
-            }
-            return newFixedLengthResponse(
-                    Response.Status.NOT_FOUND, NanoHTTPD.MIME_HTML, "404 Not Found");
-        }
-
-        private boolean isValidValue(String value) {
-            if (confirmationFails && expression.confirmationExpression.equals(value)) {
-                return true;
-            }
-            return expression.value.equals(value) || expression.baseExpression.equals(value);
-        }
-
-        protected String getContent(String value) {
-            return "Some Content " + contentAddition;
         }
     }
 
