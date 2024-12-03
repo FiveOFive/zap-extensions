@@ -1808,13 +1808,21 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
         }
     }
 
+    private static final float HEURISTIC_WEIGHT =
+            .99f; // At this time the sqli tests just look for 0, 1, or anything in between, so the
+
+    // exact value here doesn't matter. Anything between 0 and 1 works.
+
     /**
      * 0 means very different and 1 very similar. Note that this is the opposite from most compareTo
      * implementations but it matches the behavior of the compareWith function and heuristics in
      * {@code ComparableResponse}
      */
     private float compareResponses(ComparableResponse one, ComparableResponse two) {
-        return responseBodyHeuristic(one, two);
+        float total = 1f;
+        total *= locationHeaderHeuristic(one, two) * HEURISTIC_WEIGHT + (1 - HEURISTIC_WEIGHT);
+        total *= responseBodyHeuristic(one, two) * HEURISTIC_WEIGHT + (1 - HEURISTIC_WEIGHT);
+        return total;
     }
 
     /**
@@ -1833,6 +1841,20 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
         }
 
         return 0;
+    }
+
+    private float locationHeaderHeuristic(ComparableResponse one, ComparableResponse two) {
+        if (one.getStatusCode() == two.getStatusCode()
+                && one.getStatusCode() >= 300
+                && one.getStatusCode() < 400) {
+            final String locationHeaderOne = one.getHeaders().get("location");
+            final String locationHeaderTwo = two.getHeaders().get("location");
+            if (!locationHeaderOne.equals(locationHeaderTwo)) {
+                return 0;
+            }
+        }
+
+        return 1;
     }
 
     @Override
