@@ -1939,15 +1939,16 @@ public class SqlInjectionScanRule extends AbstractAppParamPlugin
 
     /**
      * Replace body by stripping off pattern strings.
-     * 
-     * Stripping both the originalPattern and attackPattern prevents false negatives when the originalPattern is always
-     * part of the response.
-     * 
-     * For example: there is a website about cats and the response body always includes "this is a page about cats", 
-     * regardless of what parameter values are sent. If the originalPattern is "cats", the stripped response is
-     * "this is a page about". Then when an attack payload is sent, such as "cats AND 1=1", the response is still
-     * "this is a page about cats". If we only strip the attackPattern, this will looks like a different response, when
-     * it fact it is the same as the response for the originalPattern.
+     *
+     * <p>Stripping both the originalPattern and attackPattern prevents false negatives when the
+     * originalPattern is always part of the response.
+     *
+     * <p>For example: there is a website about cats and the response body always includes "this is
+     * a page about cats", regardless of what parameter values are sent. If the originalPattern is
+     * "cats", the stripped response is "this is a page about". Then when an attack payload is sent,
+     * such as "cats AND 1=1", the response is still "this is a page about cats". If we only strip
+     * the attackPattern, this will looks like a different response, when it fact it is the same as
+     * the response for the originalPattern.
      */
     protected String stripOffOriginalAndAttackParam(
             String body, String originalPattern, String attackPattern) {
