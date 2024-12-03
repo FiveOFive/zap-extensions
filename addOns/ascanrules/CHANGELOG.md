@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 ### Changed
 - The XML External Entity Attack scan rule now include example alert functionality for documentation generation purposes (Issue 6119).
+- Refactor expression based and boolean based sql injection checks to use ComparableResponse (Issue 8652)
 
 ## [68] - 2024-09-24
 ### Changed
